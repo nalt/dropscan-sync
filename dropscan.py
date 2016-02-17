@@ -81,6 +81,33 @@ class Dropscan:
 		list = r.json()
 		return list
 
+	def getBatches(self, only_unsent=True):
+		"""
+		Get list of all forwarding batches
+		Returns the JSON-struct from Dropscan, adds is_sent flag
+		"""
+		r = self.session.get('https://secure.dropscan.de/forwarding_batches.json')
+		batches = r.json()
+		batches = [ b.update({'is_sent': 'sent_at' in b }) or b for b in batches ]
+		batches = [ b for b in batches if not b['is_sent'] or not only_unsent ]
+		return batches
+
+	def addMailingtoBatch(self, mailing_slug, batch_id=None):
+		"""
+		Adds a mailing to an existing forwarding batch.
+		mailing_slug  -- "slug" of mailing to add
+		batch_id      -- id of forwarding batch. If unspecified, the first unsent batch is used.
+		"""
+		if batch_id is None:
+			batches = self.getBatches();
+			if len(batches) == 0:
+				if self.verbose >= 1: print "No unsent batch available"
+				return False
+			batch_id = batches[0]['id']
+		r = self.session.get('https://secure.dropscan.de/scanboxes/%s/mailings/%s/forward?forwarding_batch_id=%s&src=detail' %
+			(self.scanbox, mailing_slug, batch_id));
+		return r.status_code == 200
+
 	def isScanned(self, mailing):
 		"""
 		Check if given mailing has been scanned, i.e. PDF is available
@@ -112,7 +139,7 @@ class Dropscan:
 			raise Exception("ZIP download not implemented.")
 
 		if self.verbose >= 3: print "--- Download mailing %s (%s) ---" % (m['barcode'], self.TYPE.reverse_mapping[type])
-		r = self.session.get(url)
+		r = self.session.get(url, verify=False)
 		if len(filename) > 0:
 			with open(filename, 'wb') as fd:
 				fd.write(r.content)
@@ -185,7 +212,7 @@ def demo(user, password, args):
 	print "=== Download of last mailing to demo_*.pdf / .jpg ==="
 	l = D.getList(D.FILTER.scanned)
 	print l[-1]
-	data1 = D.downloadMailing(l[-1], D.TYPE.thumb, 'demo_thumb.jpg')
+	# data1 = D.downloadMailing(l[-1], D.TYPE.thumb, 'demo_thumb.jpg')
 	data2 = D.downloadMailing(l[-1], D.TYPE.envelope, 'demo_envelope.jpg')
 	data3 = D.downloadMailing(l[-1], D.TYPE.pdf, 'demo_pdf.pdf')
 
@@ -196,6 +223,8 @@ if __name__ == '__main__':
 	# group = parser.add_usage_group(kind='any', required=True) # http://stackoverflow.com/questions/6722936
 	parser.add_argument('-t', action='store_true', help='Run demo/test (login, list mailings, download)')
 	parser.add_argument('-s', '--sync', action='store_true', help='One-way sync: Download missing files of all mailings to current folder')
+	parser.add_argument('--batches', action='store_true', help='List forwarding batches (only unsent)')
+	parser.add_argument('-F', '--forward_mailing', help='Add the specified mailing slug to the first existing unsent forwarding batch')
 	parser.add_argument('-u', required=0, help='Dropscan username (may be specified in credentials file)')
 	parser.add_argument('-p', required=0, help='Dropscan password (may be specified in credentials file)')
 	parser.add_argument('--thumbs', action='store_true', help='Also sync thumbs of envelopses')
@@ -235,6 +264,22 @@ if __name__ == '__main__':
 		l2 = D.getList(D.FILTER.received)
 		D.syncMailings(l2, args.thumbs)
 		D.syncMailings(l1, args.thumbs)
+
+	# List unsent forwarding batches
+	elif args.batches:
+		D = Dropscan(user, password, args.v)
+		D.login()
+		l = D.getBatches()
+		print(l)
+		if len(l) == 0:
+			print "There is no unsent forwarding batch. Create one using the web interface"
+
+	# Add mailing to forwarding batch
+	elif args.forward_mailing:
+		D = Dropscan(user, password, args.v)
+		D.login()
+		res = D.addMailingtoBatch(args.forward_mailing);
+		print "Result:", res
 
 	else:
 		parser.print_help()
