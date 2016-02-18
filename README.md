@@ -36,7 +36,7 @@ optional arguments:
                         file)
   -p P                  Dropscan password (may be specified in credentials
                         file)
-  --thumbs              Also sync thumbs of envelopses
+  --thumbs              Also sync thumbs of envelopes
   -d DIR, --dir DIR     Additional folder(s) to check for locally existing
                         files during sync.
   -v V                  Set Verbosity [0..3]
