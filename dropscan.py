@@ -126,6 +126,9 @@ class Dropscan:
 		forward_folders  -- List of folders with mailings to be forwarded
 		"""
 		for m in reversed(mailings):
+			# Check mailing status
+			if not (m['status'] == 'scanned' or m['status'] == 'received'):
+				continue
 			# Check for local file
 			(filename, local_file) = self.localFileMailing(m, self.TYPE.envelope, forward_folders)
 			# If file is found, 
