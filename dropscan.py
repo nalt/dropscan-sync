@@ -31,12 +31,14 @@ def enum(*sequential, **named):
 class Dropscan:
 	FILTER = enum('received', 'scanned', 'forwarded', 'destroyed')
 	TYPE   = enum('thumb', 'envelope', 'pdf', 'zip', 'full')
+	SYNC_DB = "dropscan.sync"
 	verbose = 0
 	user = ""
 	password = ""
 	session = None
 	scanbox = None;
 	folders = ['.']
+	syncdb = []
 
 	def __init__(self, user, password, verbose=0):
 		self.user = user
@@ -44,6 +46,20 @@ class Dropscan:
 		self.verbose = verbose
 		self.session = requests.Session()
 
+	def readSyncDB(self):
+		"""
+		Read "database" of local files
+		"""
+		if os.path.exists(self.SYNC_DB):
+			with open(self.SYNC_DB) as f:
+			    files_local = f.readlines()
+		else:
+			files_local = []
+		self.syncdb = [ i.split("\t")[0] for i in files_local ]
+
+	def writeSyncDB(self, name):
+		with open(self.SYNC_DB, 'a') as f:
+			f.write(name + "\t" + datetime.datetime.now().isoformat() + "\n")
 
 	def setProxy(self, https_proxy):
 		self.session.proxies = { 'https': https_proxy }
@@ -316,6 +332,7 @@ if __name__ == '__main__':
 	# group = parser.add_usage_group(kind='any', required=True) # http://stackoverflow.com/questions/6722936
 	parser.add_argument('-t', action='store_true', help='Run demo/test (login, list mailings, download)')
 	parser.add_argument('-s', '--sync', action='store_true', help='One-way sync: Download missing files of all mailings to current folder')
+	parser.add_argument('--nodb', action='store_true', help='Do not read Sync-DB (existence of local files is always checked)')
 	parser.add_argument('--batches', action='store_true', help='List forwarding batches (only unsent)')
 	parser.add_argument('-F', '--forward_mailing', help='Add the specified mailing slug to the first existing unsent forwarding batch')
 	parser.add_argument('--forward_dir', action='append', help='Add all mailings in given directory to forwarding batch. Must use -s.')
@@ -357,6 +374,8 @@ if __name__ == '__main__':
 	# Sync
 	elif args.sync:
 		D = Dropscan(user, password, args.v)
+		if not args.nodb:
+			D.readSyncDB()
 		if args.proxy:
 			D.setProxy(args.proxy)
 		# Search folders
