@@ -11,8 +11,9 @@ import requests
 from pyquery import PyQuery as pq
 import argparse
 import re
-import os.path
+import os.path, shutil
 import json
+import datetime
 
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -29,7 +30,7 @@ def enum(*sequential, **named):
 
 class Dropscan:
 	FILTER = enum('received', 'scanned', 'forwarded', 'destroyed')
-	TYPE   = enum('thumb', 'envelope', 'pdf', 'zip')
+	TYPE   = enum('thumb', 'envelope', 'pdf', 'zip', 'full')
 	verbose = 0
 	user = ""
 	password = ""
@@ -156,13 +157,13 @@ class Dropscan:
 		Download thumb, envelope (JPG) or PDF for a mailing.
 		mailing   -- One entry returned from getList()
 		type      -- Thumbnail, envelope or full PDF. Use self.TYPE enum.
-		filename  -- Save to given file. If empty, return the JPG/PDF
+		filename  -- Save to given file. If empty, return the JPG/PDF stream
 		"""
 		m = mailing
 		if type == self.TYPE.thumb:
 			url = m['envelope_thumbnail_url']
 		elif type == self.TYPE.envelope:
-			# The URL of the large enelope is *.jpg instead of *.small.jpg
+			# The URL of the large envelope is *.jpg instead of *.small.jpg
 			# Otherwise, this would have to be extracted from /scanboxes/*/mailings/*
 			url = re.sub(r'^(.*)\.small\.(.*)$', r'\1.\2', m['envelope_thumbnail_url']);
 		elif type == self.TYPE.pdf:
@@ -183,6 +184,23 @@ class Dropscan:
 		else:
 			return r.content
 
+	def combineFiles(self, file_envelope, file_pdf, file_full):
+		"""
+		Combines the envelope JPG and the mailing PDF in one file
+		"""
+		tmp_env = file_envelope + '.pdf'
+		ret2 = 1
+
+		ret1 = os.system('convert %s %s' % (file_envelope, tmp_env))
+		if ret1 == 0:
+			ret2 = os.system('pdftk %s %s cat output %s' % (file_pdf, tmp_env, file_full))
+			if ret2 == 0 and os.path.exists(file_full):
+				os.remove(file_pdf)
+				os.remove(file_envelope)
+		os.remove(tmp_env)
+		return (ret1 == 0) and (ret2 == 0)
+
+
 	def setLocalFolders(self, folders):
 		"""
 		Additional folder(s) to check for locally existing files  
@@ -202,6 +220,7 @@ class Dropscan:
 		Returns: (filename, local_file)
 		filename        -- Filename for this mailing, constructed from mailing id and type
 		local_path      -- local_file found for this mailing if existing, or None
+		base Filename   -- String of date + id
 		"""
 		m = mailing
 		# Rewrite date
@@ -209,8 +228,11 @@ class Dropscan:
 		date = date_.group(3) + '-' + date_.group(2) + '-' + date_.group(1)
 		# ID & Filenames for this mailing
 		id = (date + '_' +  m['barcode'])
-		filename = id + '_' + self.TYPE.reverse_mapping[type]
-		filename += '.pdf' if (type == self.TYPE.pdf) else '.jpg'
+		if type == self.TYPE.full:
+			filename = id + '.pdf'
+		else:
+			filename = id + '_' + self.TYPE.reverse_mapping[type]
+			filename += '.pdf' if (type == self.TYPE.pdf) else '.jpg'
 
 		# Check if file already exists locally
 		local_file = None
@@ -220,15 +242,16 @@ class Dropscan:
 				local_file = path
 				if self.verbose >= 3: print ("Local file found: ", folder + '/' + filename, end=" ")
 			if self.verbose >= 10: print ("Checking file", path, not local_file is None, end=" ")
-		return (filename, local_file)
+		return (filename, local_file, id)
 
-	def syncMailings(self, mailings, thumbs=False):
+	def syncMailings(self, mailings, thumbs=False, combine=True):
 		"""
 		Download all missing files (thumbs, envelope, pdf) for the given mailings
 		mailings     -- struct returned from getList()
 		"""
+		filename = {}
 		for m in reversed(mailings):
-			for f in [self.TYPE.thumb, self.TYPE.envelope, self.TYPE.pdf]:
+			for f in [self.TYPE.full, self.TYPE.thumb, self.TYPE.envelope, self.TYPE.pdf]:
 				if f == self.TYPE.thumb and not thumbs:
 					# Do not download thumbs
 					continue
@@ -236,18 +259,31 @@ class Dropscan:
 					# Do not try to download PDF for non-scanned mailing
 					continue
 				# Check for local file
-				(filename, local_file) = self.localFileMailing(m, f, self.folders)
+				(fn, local_file, file_base) = self.localFileMailing(m, f, self.folders)
+				filename[f] = fn
+				if f == self.TYPE.full:
+					if local_file is not None:
+						break	# Full file is there, nothing to do
+					else:
+						continue # Full file will be generated during pdf download by combineFiles
 				# Perform download, if required:
-				if local_file is None:
-					res = self.downloadMailing(m, f, filename)
+				if local_file is None and not filename[f] in self.syncdb:
+					res = self.downloadMailing(m, f, filename[f])
 					if self.verbose >= 0:
 						if res:
-							print ("Mailing stored to", filename, end=" ")
+							print ("Mailing stored to", filename[f])
+							self.writeSyncDB(filename[f])
+							if f == self.TYPE.pdf and combine:
+								r = self.combineFiles(filename[self.TYPE.envelope], filename[self.TYPE.pdf],  filename[self.TYPE.full])
+								if r:
+									print ("Mailing combined in", filename[self.TYPE.full])
+								else:
+									print ("Failed: Combining mailing")
 						else:
-							print (  "Mailing failed to download:", filename, end=" ")
+							print (  "Mailing failed to download:", filename)
 				else:
 					if self.verbose >= 1:
-						print ("File", filename, "already exists.", end=" ")
+						print ("File", filename, "already exists.")
 
 
 def demo(user, password, args):
@@ -291,6 +327,12 @@ if __name__ == '__main__':
 	parser.add_argument('-v', default=0, type=int, help='Set Verbosity [0..3]')
 	parser.add_argument('--proxy', help='Use a proxy server to connect to Dropscan')
 	args = parser.parse_args()
+
+	# Check tools
+	for tool in [ 'convert', 'pdftk' ]:
+		if shutil.which(tool) is None:
+			print("Missing, please install:", tool)
+
 
 	# Read credentials file
 	user = ''
