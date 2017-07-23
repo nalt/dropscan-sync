@@ -1,7 +1,8 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 """
 Client class and downloader for the dropscan.de scan service.
 List, download and synchronize (one-way) mailings
+INSTALL: sudo apt install python-pyquery python-certifi python3-pyquery
 2015-06
 (c) Nicolas Alt
 """
@@ -12,13 +13,16 @@ import argparse
 import re
 import os.path
 import json
+
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 #import urllib3
 #urllib3.disable_warnings()
 
 
 def enum(*sequential, **named):
     enums = dict(zip(sequential, range(len(sequential))), **named)
-    reverse = dict((value, key) for key, value in enums.iteritems())
+    reverse = dict((value, key) for key, value in enums.items())
     enums['reverse_mapping'] = reverse
     return type('Enum', (), enums)
 
@@ -46,23 +50,23 @@ class Dropscan:
 	def login(self):
 		""" Login to dropscan.de. Saves cookie and the scanbox ID as class variables. """
 		# Get Auth Token from Login form
-		if self.verbose >= 3: print "--- Pre-Login ---"
+		if self.verbose >= 3: print ("--- Pre-Login ---", end=" ")
 		r = self.session.get('https://secure.dropscan.de/login')
 		d = pq(r.content)
 		auth_token = d('[name=authenticity_token]').attr("value")
-		if self.verbose >= 3: print "Auth token: ", auth_token
+		if self.verbose >= 3: print ("Auth token: ", auth_token, end=" ")
 
 		# Login
-		if self.verbose >= 3: print "--- Login ---" 
+		if self.verbose >= 3: print ("--- Login ---" , end=" ")
 		auth = { 'user[email]': self.user, 'user[password]': self.password, 'user[remember_me]': 0,
 		'authenticity_token': auth_token}
 		r = self.session.post('https://secure.dropscan.de/login',
 			data = auth, allow_redirects=True)
 		# STATUS is 200 on error, 302 on success (if not following redirect)
-		if self.verbose >= 3: print "Status code: ", r.status_code, "\nURL: ", r.url
-		#print r.text
+		if self.verbose >= 3: print ("Status code: ", r.status_code, "\nURL: ", r.url, end=" ")
+		#print (r.text
 
-		# Get scanbox-id from URL. Login results in a 302 forward to the scanbox URL.
+		# Get scanbox-id from URL. Login results in a 302 forward to the scanbox URL., end=" ")
 		m = re.search('.*/scanboxes/([0-9a-fA-F].*)$', r.url)
 		if m is None:
 			raise Exception("Login error (scanbox not found)."); 
@@ -75,7 +79,7 @@ class Dropscan:
 		filter -- Use self.FILTER enum
 		"""
 		filter_str = self.FILTER.reverse_mapping[filter]
-		if self.verbose >= 3: print "--- getList (", filter_str, ") ---"
+		if self.verbose >= 3: print ("--- getList (", filter_str, ") ---", end=" ")
 		r = self.session.get('https://secure.dropscan.de/scanboxes/' + 
 			self.scanbox + '/mailings.json?filter=' + filter_str)
 		list = r.json()
@@ -103,19 +107,19 @@ class Dropscan:
 		if batch is None:
 			batches = self.getBatches();
 			if len(batches) == 0:
-				if self.verbose >= 1: print "No unsent batch available"
+				if self.verbose >= 1: print ("No unsent batch available", end=" ")
 				return "nobatch"
 			batch = batches[0]
 		# Check if mailing already in batch
 		for m in batch['mailings']:
 			if m['slug'] == mailing_slug:
-				if self.verbose >= 1: print "Mailing", m['slug'], "already in batch"
+				if self.verbose >= 1: print ("Mailing", m['slug'], "already in batch", end=" ")
 				return "alreadyin"
 		# Add mailing to batch
 		r = self.session.get('https://secure.dropscan.de/scanboxes/%s/mailings/%s/forward?forwarding_batch_id=%s&src=detail' %
 			(self.scanbox, mailing_slug, batch['id']));
 		ok = r.status_code == 200
-		if not ok and self.verbose >= 1: print "Failed to add mailing", mailing_slug, "to batch"
+		if not ok and self.verbose >= 1: print ("Failed to add mailing", mailing_slug, "to batch", end=" ")
 		return "added" if ok else "error"
 
 
@@ -135,9 +139,9 @@ class Dropscan:
 			if local_file is not None:
 				res = self.addMailingtoBatch(m['slug'])
 				if res == 'added':
-					print "Adding mailing to batch:", filename
+					print ("Adding mailing to batch:", filename, end=" ")
 				elif res == 'error':
-					print "Error adding mailing to batch:", filename
+					print ("Error adding mailing to batch:", filename, end=" ")
 
 
 	def isScanned(self, mailing):
@@ -163,14 +167,14 @@ class Dropscan:
 			url = re.sub(r'^(.*)\.small\.(.*)$', r'\1.\2', m['envelope_thumbnail_url']);
 		elif type == self.TYPE.pdf:
 			if not self.isScanned(m):
-				if self.verbose >=2: print "Mailing %s  not yet scanned" % (m['barcode'])
+				if self.verbose >=2: print ("Mailing %s  not yet scanned" % (m['barcode']), end=" ")
 				return False
 			url = 'https://secure.dropscan.de/scanboxes/' + \
 				self.scanbox + '/mailings/' + m['slug'] + '/download_pdf'
 		elif type == self.TYPE.zip:
 			raise Exception("ZIP download not implemented.")
 
-		if self.verbose >= 3: print "--- Download mailing %s (%s) ---" % (m['barcode'], self.TYPE.reverse_mapping[type])
+		if self.verbose >= 3: print ("--- Download mailing %s (%s) ---" % (m['barcode'], self.TYPE.reverse_mapping[type]), end=" ")
 		r = self.session.get(url, verify=False)
 		if len(filename) > 0:
 			with open(filename, 'wb') as fd:
@@ -185,7 +189,8 @@ class Dropscan:
 		"""
 		if folders is None: self.folders = []
 		else: self.folders = folders + ['.']
-		if self.verbose >= 3: print "Local folders: ", self.folders
+		self.folders = list(set(self.folders))  # Unique elements
+		if self.verbose >= 3: print ("Local folders: ", self.folders, end=" ")
 
 	def localFileMailing(self, mailing, type, search_folders):
 		"""
@@ -203,7 +208,7 @@ class Dropscan:
 		date_ = re.search('([0-9]*)\.([0-9]*)\.([0-9]*)', m['created_at'])
 		date = date_.group(3) + '-' + date_.group(2) + '-' + date_.group(1)
 		# ID & Filenames for this mailing
-		id = (date + '_' +  m['barcode']).encode('utf8');
+		id = (date + '_' +  m['barcode'])
 		filename = id + '_' + self.TYPE.reverse_mapping[type]
 		filename += '.pdf' if (type == self.TYPE.pdf) else '.jpg'
 
@@ -213,8 +218,8 @@ class Dropscan:
 			path = folder + '/' + filename
 			if os.path.isfile(path):
 				local_file = path
-				if self.verbose >= 3: print "Local file found: ", folder + '/' + filename
-			if self.verbose >= 10: print "Checking file", path, not local_file is None
+				if self.verbose >= 3: print ("Local file found: ", folder + '/' + filename, end=" ")
+			if self.verbose >= 10: print ("Checking file", path, not local_file is None, end=" ")
 		return (filename, local_file)
 
 	def syncMailings(self, mailings, thumbs=False):
@@ -236,33 +241,35 @@ class Dropscan:
 				if local_file is None:
 					res = self.downloadMailing(m, f, filename)
 					if self.verbose >= 0:
-						if res: print "Mailing stored to", filename
-						else: print   "Mailing failed to download:", filename
+						if res:
+							print ("Mailing stored to", filename, end=" ")
+						else:
+							print (  "Mailing failed to download:", filename, end=" ")
 				else:
 					if self.verbose >= 1:
-						print "File", filename, "already exists."
+						print ("File", filename, "already exists.", end=" ")
 
 
 def demo(user, password, args):
 	"""	Demo/test routine: Login, list mailings, download one mailing """
-	print "=== Running test ===="
+	print ("=== Running test ====", end=" ")
 	D = Dropscan(user, password, args.v)
 	if args.proxy:
 		D.setProxy(args.proxy)
 	D.login()
 
-	print "=== List of all mailings ==="
+	print ("=== List of all mailings ===", end=" ")
 	for f in  [D.FILTER.received, D.FILTER.scanned, D.FILTER.forwarded, D.FILTER.destroyed]:
-		print "INBOX:", D.FILTER.reverse_mapping[f]
+		print ("INBOX:", D.FILTER.reverse_mapping[f], end=" ")
 		l = D.getList(f)
 		for (i,m) in enumerate(l):
 			(filename,local_file) = D.localFileMailing(m, D.TYPE.envelope, D.folders)
-			print "%2d: %s %s. local envelope: %s" % (i, m['created_at'], m['barcode'], str(local_file))
+			print ("%2d: %s %s. local envelope: %s" % (i, m['created_at'], m['barcode'], str(local_file)), end=" ")
 
-	print "=== Download of last mailing to demo_*.pdf / .jpg ==="
+	print ("=== Download of last mailing to demo_*.pdf / .jpg ===", end=" ")
 	l = D.getList(D.FILTER.scanned)
-	print l[-1]
-	# data1 = D.downloadMailing(l[-1], D.TYPE.thumb, 'demo_thumb.jpg')
+	print (l[-1])
+	# data1 = D.downloadMailing(l[-1], D.TYPE.thumb, 'demo_thumb.jpg'), end=" ")
 	data2 = D.downloadMailing(l[-1], D.TYPE.envelope, 'demo_envelope.jpg')
 	data3 = D.downloadMailing(l[-1], D.TYPE.pdf, 'demo_pdf.pdf')
 
@@ -279,6 +286,7 @@ if __name__ == '__main__':
 	parser.add_argument('-u', required=0, help='Dropscan username (may be specified in credentials file)')
 	parser.add_argument('-p', required=0, help='Dropscan password (may be specified in credentials file)')
 	parser.add_argument('--thumbs', action='store_true', help='Also sync thumbs of envelopses')
+	parser.add_argument('-r', '--recursive',  action='store_true', help='Check all subfolders for locally existing files during sync.')
 	parser.add_argument('-d', '--dir',  action='append', help='Additional folder(s) to check for locally existing files during sync.')
 	parser.add_argument('-v', default=0, type=int, help='Set Verbosity [0..3]')
 	parser.add_argument('--proxy', help='Use a proxy server to connect to Dropscan')
@@ -293,9 +301,9 @@ if __name__ == '__main__':
 		cred = json.loads(json_data)
 		user = cred["user"]
 		password = cred["password"]
-		if args.v >= 2: print "Credentials loaded from", cred_file
+		if args.v >= 2: print ("Credentials loaded from", cred_file, end=" ")
 	except:
-		if args.v >= 2: print "Credentials file", cred_file, "not loaded."
+		if args.v >= 2: print ("Credentials file", cred_file, "not loaded.", end=" ")
 
 	if args.u: user = args.u
 	if args.p: password = args.p
@@ -309,7 +317,12 @@ if __name__ == '__main__':
 		D = Dropscan(user, password, args.v)
 		if args.proxy:
 			D.setProxy(args.proxy)
-		folders = []  if args.dir is None else args.dir
+		# Search folders
+		folders = []
+		if args.recursive:
+			folders = [d[0] for d in os.walk('.')]
+		if args.dir:
+			folders += args.dir
 		if args.forward_dir:
 			folders += args.forward_dir
 		D.setLocalFolders(folders)
@@ -331,14 +344,14 @@ if __name__ == '__main__':
 		l = D.getBatches()
 		print(l)
 		if len(l) == 0:
-			print "There is no unsent forwarding batch. Create one using the web interface"
+			print ("There is no unsent forwarding batch. Create one using the web interface", end=" ")
 
 	# Add mailing to forwarding batch
 	elif args.forward_mailing:
 		D = Dropscan(user, password, args.v)
 		D.login()
 		res = D.addMailingtoBatch(args.forward_mailing);
-		print "Result:", res
+		print ("Result:", res, end=" ")
 
 	else:
 		parser.print_help()
