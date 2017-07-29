@@ -293,6 +293,22 @@ class Dropscan:
 
 		return (filename, local_file)
 
+	def checkMultiple(self, mailings):
+		"""
+		Check if there are multiple files for one mailing
+		"""
+		# Create file database:
+		self.localFileMailing(mailings[0], self.TYPE.pdf, self.folders)
+		for m in reversed(mailings):
+			r1 = re.compile('.*[-_\. ]' + m['barcode'] + '.*\.pdf')
+			r2 = re.compile('.*[-_\. ]' + m['barcode'] + '.*\.jpg')
+			local_pdf = list(filter(r1.match, self.local_files_cache))
+			local_jpg = list(filter(r2.match, self.local_files_cache))
+			if len(local_pdf) > 1 or len(local_jpg) > 1:
+				print("Found multiple files for", m['barcode'])
+				for f in local_pdf + local_jpg: print("  ", f)
+
+
 	def syncMailings(self, mailings, thumbs=False, combine=True):
 		"""
 		Download all missing files (thumbs, envelope, pdf) for the given mailings
@@ -404,12 +420,13 @@ def demo(user, password, args):
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	# group = parser.add_usage_group(kind='any', required=True) # http://stackoverflow.com/questions/6722936
-	parser.add_argument('-t', action='store_true', help='Run demo/test (login, list mailings, download)')
-	parser.add_argument('-s', '--sync', action='store_true', help='One-way sync: Download missing files of all mailings to current folder')
+	parser.add_argument('-t', action='store_true', help='MODE: Run demo/test (login, list mailings, download)')
+	parser.add_argument('-s', '--sync', action='store_true', help='MODE: One-way sync: Download missing files of all mailings to current folder')
 	parser.add_argument('--nodb', action='store_true', help='Do not read Sync-DB (existence of local files is always checked)')
-	parser.add_argument('--batches', action='store_true', help='List forwarding batches (only unsent)')
-	parser.add_argument('-F', '--forward_mailing', help='Add the specified mailing slug to the first existing unsent forwarding batch')
+	parser.add_argument('--batches', action='store_true', help='MODE: List forwarding batches (only unsent)')
+	parser.add_argument('-F', '--forward_mailing', help='MODE: Add the specified mailing slug to the first existing unsent forwarding batch')
 	parser.add_argument('--forward_dir', action='append', help='Add all mailings in given directory to forwarding batch. Must use -s.')
+	parser.add_argument('-c', '--check_multiple', action='store_true', help='MODE: Check if there are multiple files of the same mailing')
 	parser.add_argument('-u', required=0, help='Dropscan username (may be specified in credentials file)')
 	parser.add_argument('-p', required=0, help='Dropscan password (may be specified in credentials file)')
 	parser.add_argument('--thumbs', action='store_true', help='Also sync thumbs of envelopses')
@@ -424,7 +441,6 @@ if __name__ == '__main__':
 	for tool in [ 'convert', 'pdftk' ]:
 		if shutil.which(tool) is None:
 			print("Missing, please install:", tool)
-
 
 	# Read credentials file
 	user = ''
@@ -478,6 +494,17 @@ if __name__ == '__main__':
 		# Auto-add mailings in folder to forward batch
 		if args.forward_dir:
 			D.addFolderstoBatch(l1+l2, args.forward_dir)
+
+	# Check for multiple files:
+	elif args.check_multiple:
+		if not args.count:
+			D.setListCount(1000)
+			D.login()
+			l1 = D.getList(D.FILTER.scanned)
+			l2 = D.getList(D.FILTER.received)
+			l3 = D.getList(D.FILTER.forwarded)
+			l4 = D.getList(D.FILTER.destroyed)
+			D.checkMultiple(l4+l3+l2+l1)
 
 	# List unsent forwarding batches
 	elif args.batches:
