@@ -211,21 +211,27 @@ class Dropscan:
 		else:
 			return r.content
 
-	def combineFiles(self, file_envelope, file_pdf, file_full):
+	def combineFiles(self, file_envelope, file_pdf):
 		"""
-		Combines the envelope JPG and the mailing PDF in one file
+		Combines the envelope JPG and the mailing PDF into single file
 		"""
 		tmp_env = file_envelope + '.pdf'
 		ret2 = 1
 
-		ret1 = os.system('convert %s %s' % (file_envelope, tmp_env))
+		file_full = file_pdf.replace('_pdf', '')
+		if os.path.isfile(file_full):
+			if self.verbose >= 3: print("Cannot combine to %s; file exists" % (file_full))
+			return False
+
+		ret1 = os.system('convert "%s" "%s"' % (file_envelope, tmp_env))
 		if ret1 == 0:
-			ret2 = os.system('pdftk %s %s cat output %s' % (file_pdf, tmp_env, file_full))
+			ret2 = os.system('pdftk "%s" "%s" cat output "%s"' % (file_pdf, tmp_env, file_full))
 			if ret2 == 0 and os.path.exists(file_full):
 				os.remove(file_pdf)
 				os.remove(file_envelope)
 		os.remove(tmp_env)
-		return (ret1 == 0) and (ret2 == 0)
+		if (ret1 == 0) and (ret2 == 0): return file_full
+		else: return False
 
 
 	def setLocalFolders(self, folders):
@@ -286,37 +292,53 @@ class Dropscan:
 		mailings     -- struct returned from getList()
 		"""
 		filename = {}
+		ftypes = [self.TYPE.full, self.TYPE.envelope, self.TYPE.pdf]
+		if thumbs:
+			ftypes.append(self.TYPE.thumb)
 		for m in reversed(mailings):
-			for f in [self.TYPE.full, self.TYPE.thumb, self.TYPE.envelope, self.TYPE.pdf]:
-				if f == self.TYPE.thumb and not thumbs:
-					# Do not download thumbs
-					continue
-				if f == self.TYPE.pdf and not self.isScanned(m):
-					# Do not try to download PDF for non-scanned mailing
-					continue
+			all_exist = True
+			full_exists = False
+			for f in ftypes:
 				# Check for local file
-				(fn, local_file, file_base) = self.localFileMailing(m, f, self.folders)
-				filename[f] = fn
-				if f == self.TYPE.full:
-					if local_file is not None:
-						break	# Full file is there, nothing to do
-					else:
-						continue # Full file will be generated during pdf download by combineFiles
+				(file_org, local_file) = self.localFileMailing(m, f, self.folders)
+				filename[f] = file_org if local_file is None else local_file
+
+				if f == self.TYPE.full and local_file is not None:
+					full_exists = local_file
 				# Perform download, if required:
-				if local_file is None and not filename[f] in self.syncdb:
-					res = self.downloadMailing(m, f, filename[f])
-					if self.verbose >= 0:
-						if res:
-							print ("Mailing stored to", filename[f])
-							self.writeSyncDB(filename[f])
-							if f == self.TYPE.pdf and combine:
-								r = self.combineFiles(filename[self.TYPE.envelope], filename[self.TYPE.pdf],  filename[self.TYPE.full])
-								if r:
-									print ("Mailing combined in", filename[self.TYPE.full])
-								else:
-									print ("Failed: Combining mailing")
-						else:
-							print (  "Mailing failed to download:", filename)
+				if not full_exists and f != self.TYPE.full and \
+					local_file is None and \
+					not file_org in self.syncdb:
+					stored = self.downloadMailing(m, f, filename[f])
+					if stored:
+						self.writeSyncDB(file_org)
+						filename[f] = stored
+						print ("Mailing stored to", filename[f])
+					elif stored is False:
+						#if self.verbose >= 0:
+						all_exist = False
+						print (  "Mailing failed to download:", filename[f])
+					elif stored is None:
+						# File does not exist (yet)
+						all_exist = False
+				else:
+					if self.verbose >= 3:
+						print ("File", filename[f], "already exists.")
+
+				# Combine envelope & mailing into one file
+				if f == self.TYPE.pdf and combine and not full_exists and all_exist:
+					r = self.combineFiles(filename[self.TYPE.envelope], filename[self.TYPE.pdf])
+					if r:
+						filename[self.TYPE.full] = r
+						r_ren = self.writeTag(m, r)
+						print ("Mailing combined to", r)
+					else:
+						print ("Failed: Combining mailing")
+
+				# Rename files to include current labels
+				ren = self.writeTag(m, filename[f])
+				if ren:
+					filename[f] = ren
 
 	def writeTag(self, mailing, local_file):
 		"""
