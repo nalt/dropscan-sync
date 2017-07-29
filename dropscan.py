@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """
 Client class and downloader for the dropscan.de scan service.
 List, download and synchronize (one-way) mailings
@@ -83,7 +83,6 @@ class Dropscan:
 			data = auth, allow_redirects=True)
 		# STATUS is 200 on error, 302 on success (if not following redirect)
 		if self.verbose >= 3: print ("Status code: ", r.status_code, "\nURL: ", r.url, end=" ")
-		#print (r.text
 
 		# Get scanbox-id from URL. Login results in a 302 forward to the scanbox URL., end=" ")
 		m = re.search('.*/scanboxes/([0-9a-fA-F].*)$', r.url)
@@ -454,12 +453,15 @@ if __name__ == '__main__':
 		if args.forward_dir:
 			folders += args.forward_dir
 		D.setLocalFolders(folders)
+		# Do main Sync
 		D.login()
 		l1 = D.getList(D.FILTER.scanned)
 		l2 = D.getList(D.FILTER.received)
 		l3 = D.getList(D.FILTER.forwarded)
-		D.syncMailings(l2, args.thumbs)
-		D.syncMailings(l1, args.thumbs)
+		l4 = D.getList(D.FILTER.destroyed)
+		D.syncMailings(l4+l3+l2+l1, args.thumbs)
+		#D.syncMailings(l2, args.thumbs)
+		#D.syncMailings(l1, args.thumbs)
 
 		# Auto-add mailings in folder to forward batch
 		if args.forward_dir:
