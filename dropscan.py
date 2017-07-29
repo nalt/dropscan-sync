@@ -37,6 +37,7 @@ class Dropscan:
 	password = ""
 	session = None
 	scanbox = None;
+	list_count = 20
 	folders = ['.']
 	syncdb = []
 	local_folders_cache = None
@@ -65,6 +66,12 @@ class Dropscan:
 
 	def setProxy(self, https_proxy):
 		self.session.proxies = { 'https': https_proxy }
+
+	def setListCount(self, count):
+		"""
+		Set number of items to request from dropscan; their default is 20
+		"""
+		self.list_count = count
 
 	def login(self):
 		""" Login to dropscan.de. Saves cookie and the scanbox ID as class variables. """
@@ -98,10 +105,11 @@ class Dropscan:
 		"""
 		filter_str = self.FILTER.reverse_mapping[filter]
 		if self.verbose >= 3: print ("--- getList (", filter_str, ") ---", end=" ")
-		r = self.session.get('https://secure.dropscan.de/scanboxes/' + 
-			self.scanbox + '/mailings.json?filter=' + filter_str)
-		list = r.json()
-		return list
+		url = 'https://secure.dropscan.de/scanboxes/' + \
+			self.scanbox + '/mailings.json?filter=' + filter_str + '&maxPerPage=' + str(self.list_count)
+		r = self.session.get(url)
+		mailings = r.json()
+		return mailings
 
 	def getBatches(self, only_unsent=True):
 		"""
@@ -407,8 +415,9 @@ if __name__ == '__main__':
 	parser.add_argument('--thumbs', action='store_true', help='Also sync thumbs of envelopses')
 	parser.add_argument('-r', '--recursive',  action='store_true', help='Check all subfolders for locally existing files during sync.')
 	parser.add_argument('-d', '--dir',  action='append', help='Additional folder(s) to check for locally existing files during sync.')
-	parser.add_argument('-v', default=0, type=int, help='Set Verbosity [0..3]')
+	parser.add_argument('--count', type=int, help='Number of list items to request from Dropscan (default 20)')
 	parser.add_argument('--proxy', help='Use a proxy server to connect to Dropscan')
+	parser.add_argument('-v', default=0, type=int, help='Set Verbosity [0..3]')
 	args = parser.parse_args()
 
 	# Check tools
@@ -433,26 +442,29 @@ if __name__ == '__main__':
 	if args.u: user = args.u
 	if args.p: password = args.p
 
+	D = Dropscan(user, password, args.v)
+	if args.count:
+		D.setListCount(args.count)
+	if args.proxy:
+		D.setProxy(args.proxy)
+	# Search folders
+	folders = []
+	if args.recursive:
+		folders = [d[0] for d in os.walk('.')]
+	if args.dir:
+		folders += args.dir
+	if args.forward_dir:
+		folders += args.forward_dir
+	D.setLocalFolders(folders)
+
 	# Test/demo
 	if args.t:
 		demo(user, password, args)
 	
 	# Sync
 	elif args.sync:
-		D = Dropscan(user, password, args.v)
 		if not args.nodb:
 			D.readSyncDB()
-		if args.proxy:
-			D.setProxy(args.proxy)
-		# Search folders
-		folders = []
-		if args.recursive:
-			folders = [d[0] for d in os.walk('.')]
-		if args.dir:
-			folders += args.dir
-		if args.forward_dir:
-			folders += args.forward_dir
-		D.setLocalFolders(folders)
 		# Do main Sync
 		D.login()
 		l1 = D.getList(D.FILTER.scanned)
@@ -469,7 +481,6 @@ if __name__ == '__main__':
 
 	# List unsent forwarding batches
 	elif args.batches:
-		D = Dropscan(user, password, args.v)
 		D.login()
 		l = D.getBatches()
 		print(l)
@@ -478,7 +489,6 @@ if __name__ == '__main__':
 
 	# Add mailing to forwarding batch
 	elif args.forward_mailing:
-		D = Dropscan(user, password, args.v)
 		D.login()
 		res = D.addMailingtoBatch(args.forward_mailing);
 		print ("Result:", res, end=" ")
