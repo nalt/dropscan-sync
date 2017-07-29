@@ -39,6 +39,8 @@ class Dropscan:
 	scanbox = None;
 	folders = ['.']
 	syncdb = []
+	local_folders_cache = None
+	local_files_cache = None
 
 	def __init__(self, user, password, verbose=0):
 		self.user = user
@@ -225,6 +227,7 @@ class Dropscan:
 		else: self.folders = folders + ['.']
 		self.folders = list(set(self.folders))  # Unique elements
 		if self.verbose >= 3: print ("Local folders: ", self.folders, end=" ")
+		self.local_files = None
 
 	def localFileMailing(self, mailing, type, search_folders):
 		"""
@@ -236,29 +239,37 @@ class Dropscan:
 		Returns: (filename, local_file)
 		filename        -- Filename for this mailing, constructed from mailing id and type
 		local_path      -- local_file found for this mailing if existing, or None
-		base Filename   -- String of date + id
 		"""
 		m = mailing
-		# Rewrite date
+		# Create list of local files, if needed
+		if search_folders != self.local_folders_cache:
+			self.local_files_cache = []
+			for folder in search_folders:
+				if folder[-1] != os.sep: folder += os.sep
+				files = os.listdir(folder)
+				self.local_files_cache += [folder + f for f in files]
+			if self.verbose >= 3:
+				print("Created file list with", len(self.local_files_cache), "entries")
+			self.local_folders_cache = search_folders
+
+		# Create filename for this mailing
 		date_ = re.search('([0-9]*)\.([0-9]*)\.([0-9]*)', m['created_at'])
 		date = date_.group(3) + '-' + date_.group(2) + '-' + date_.group(1)
 		# ID & Filenames for this mailing
-		id = (date + '_' +  m['barcode'])
-		if type == self.TYPE.full:
-			filename = id + '.pdf'
-		else:
-			filename = id + '_' + self.TYPE.reverse_mapping[type]
-			filename += '.pdf' if (type == self.TYPE.pdf) else '.jpg'
+		code = m['barcode']
+		type_str = '_' + self.TYPE.reverse_mapping[type] if type != self.TYPE.full else ''
+		ext = 'jpg' if (type in [self.TYPE.thumb, self.TYPE.envelope]) else 'pdf'
+		filename = date + '_' + code + type_str + '.' + ext
 
-		# Check if file already exists locally
-		local_file = None
-		for folder in search_folders:
-			path = folder + '/' + filename
-			if os.path.isfile(path):
-				local_file = path
-				if self.verbose >= 3: print ("Local file found: ", folder + '/' + filename, end=" ")
-			if self.verbose >= 10: print ("Checking file", path, not local_file is None, end=" ")
-		return (filename, local_file, id)
+		# Find locally existing file (or None)
+		# Condition accodring to regexp: *<code><-tags><_type>.<ext>
+		r = re.compile('.*[-_\. ]' + m['barcode'] + "[-A-Z]*" + type_str + '\.' + ext)
+		local_file = list(filter(r.match, self.local_files_cache))
+		if len(local_file) > 1 and self.verbose >= 2:
+			print("Found multiple identical files:", local_file)
+		local_file = local_file[0] if len(local_file) >= 1 else None
+
+		return (filename, local_file)
 
 	def syncMailings(self, mailings, thumbs=False, combine=True):
 		"""
@@ -297,9 +308,34 @@ class Dropscan:
 									print ("Failed: Combining mailing")
 						else:
 							print (  "Mailing failed to download:", filename)
+
+	def writeTag(self, mailing, local_file):
+		"""
+		Adds tags to filename (by renaming) for deleted/forwarded status
+		"""
+		if local_file is None or not os.path.isfile(local_file):
+			return
+		tag = ''
+		if mailing['status'] == 'forwarded': tag = 'F'
+		if mailing['status'] == 'destroyed': tag = 'D'
+		# Scan filename for barcode-tags
+		b = mailing['barcode']
+		m = re.match(".*("+b+")-([A-Z]*)|.*("+b+")", local_file);
+		if m[1] or m[3]:
+			pos = m.span()[1]
+			file_tag = m[2] if m[2] is not None else ''
+			if not tag in file_tag:
+				if m[2] is None: tag = '-' + tag
+				local_file_new = local_file[:pos] + tag + local_file[pos:]
+				if not os.path.isfile(local_file_new):
+					os.rename(local_file, local_file_new)
+					if self.verbose >= 1 or True:
+						print("New Tags, renamed to:", local_file_new)
+					return local_file_new
 				else:
 					if self.verbose >= 1:
-						print ("File", filename, "already exists.")
+						print("Renamed failed, file exists:", local_file_new)
+		return None
 
 
 def demo(user, password, args):
