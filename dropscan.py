@@ -162,22 +162,21 @@ class Dropscan:
 				elif res == 'error':
 					print ("Error adding mailing to batch:", filename, end=" ")
 
-
-	def isScanned(self, mailing):
-		"""
-		Check if given mailing has been scanned, i.e. PDF is available
-		"""
-		# TODO: Check scanned_at field? Which status codes are possible?
-		return mailing['status'] == 'scanned' or mailing['status'] == 'destroyed'
-
 	def downloadMailing(self, mailing, type, filename=""):
 		"""
 		Download thumb, envelope (JPG) or PDF for a mailing.
+		Uses subfolders for recipients, if they exist
 		mailing   -- One entry returned from getList()
 		type      -- Thumbnail, envelope or full PDF. Use self.TYPE enum.
 		filename  -- Save to given file. If empty, return the JPG/PDF stream
+		Rerturns:	 True (written to file), Contents, False (error), None (nothing to download)
 		"""
-		m = mailing
+		#m = mailing
+		url_json ='https://secure.dropscan.de/scanboxes/' + \
+				self.scanbox + '/mailings/' + mailing['slug'] + '.json'
+		r = self.session.get(url_json)
+		m = r.json()
+
 		if type == self.TYPE.thumb:
 			url = m['envelope_thumbnail_url']
 		elif type == self.TYPE.envelope:
@@ -185,20 +184,30 @@ class Dropscan:
 			# Otherwise, this would have to be extracted from /scanboxes/*/mailings/*
 			url = re.sub(r'^(.*)\.small\.(.*)$', r'\1.\2', m['envelope_thumbnail_url']);
 		elif type == self.TYPE.pdf:
-			if not self.isScanned(m):
-				if self.verbose >=2: print ("Mailing %s  not yet scanned" % (m['barcode']), end=" ")
-				return False
+			if not 'scanned_at' in m:
+				if self.verbose >=2: print ("Mailing %s  not yet scanned" % (m['barcode']))
+				return None
 			url = 'https://secure.dropscan.de/scanboxes/' + \
 				self.scanbox + '/mailings/' + m['slug'] + '/download_pdf'
 		elif type == self.TYPE.zip:
 			raise Exception("ZIP download not implemented.")
 
-		if self.verbose >= 3: print ("--- Download mailing %s (%s) ---" % (m['barcode'], self.TYPE.reverse_mapping[type]), end=" ")
+		if self.verbose >= 3: print ("--- Download mailing %s (%s) ---" % (m['barcode'], self.TYPE.reverse_mapping[type]))
+		# Find filename
+		rec = m['recipient']['name']
+		if os.path.isdir(rec):
+			filename = rec + os.sep + filename
+		elif self.verbose >= 2:
+			print('Folder "%s" not found to sort by recipient')
+		# HTTP GET
 		r = self.session.get(url, verify=False)
+		if r.status_code != 200:
+			if self.verbose >= 2: print("Invalid HTTP status code", r.status_code)
+			return False
 		if len(filename) > 0:
 			with open(filename, 'wb') as fd:
 				fd.write(r.content)
-			return True
+			return filename
 		else:
 			return r.content
 
