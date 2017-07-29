@@ -133,19 +133,19 @@ class Dropscan:
 		if batch is None:
 			batches = self.getBatches();
 			if len(batches) == 0:
-				if self.verbose >= 1: print ("No unsent batch available", end=" ")
+				if self.verbose >= 1: print ("No unsent batch available")
 				return "nobatch"
 			batch = batches[0]
 		# Check if mailing already in batch
 		for m in batch['mailings']:
 			if m['slug'] == mailing_slug:
-				if self.verbose >= 1: print ("Mailing", m['slug'], "already in batch", end=" ")
+				if self.verbose >= 1: print ("Mailing", m['slug'], "already in batch")
 				return "alreadyin"
 		# Add mailing to batch
 		r = self.session.get('https://secure.dropscan.de/scanboxes/%s/mailings/%s/forward?forwarding_batch_id=%s&src=detail' %
 			(self.scanbox, mailing_slug, batch['id']));
 		ok = r.status_code == 200
-		if not ok and self.verbose >= 1: print ("Failed to add mailing", mailing_slug, "to batch", end=" ")
+		if not ok and self.verbose >= 1: print ("Failed to add mailing", mailing_slug, "to batch")
 		return "added" if ok else "error"
 
 
@@ -155,19 +155,23 @@ class Dropscan:
 		mailings         -- Mailings struct from getList()
 		forward_folders  -- List of folders with mailings to be forwarded
 		"""
+		# Build local files DB
+		self.localFileMailing(mailings[0], self.TYPE.envelope, forward_folders)
 		for m in reversed(mailings):
 			# Check mailing status
 			if not (m['status'] == 'scanned' or m['status'] == 'received'):
 				continue
 			# Check for local file
-			(filename, local_file) = self.localFileMailing(m, self.TYPE.envelope, forward_folders)
+			r1 = re.compile('.*[-_\. ]' + m['barcode'] + '[-_\. ]')
+			local_files = list(filter(r1.match, self.local_files_cache))
+
 			# If file is found, 
-			if local_file is not None:
+			if len(local_files) > 0:
 				res = self.addMailingtoBatch(m['slug'])
 				if res == 'added':
-					print ("Adding mailing to batch:", filename, end=" ")
+					print ("Adding mailing to batch:", local_files[0])
 				elif res == 'error':
-					print ("Error adding mailing to batch:", filename, end=" ")
+					print ("Error adding mailing to batch:", local_files[0])
 
 	def downloadMailing(self, mailing, type, filename=""):
 		"""
