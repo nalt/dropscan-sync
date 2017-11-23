@@ -76,25 +76,25 @@ class Dropscan:
 	def login(self):
 		""" Login to dropscan.de. Saves cookie and the scanbox ID as class variables. """
 		# Get Auth Token from Login form
-		if self.verbose >= 3: print ("--- Pre-Login ---", end=" ")
+		if self.verbose >= 3: print ("--- Pre-Login ---")
 		r = self.session.get('https://secure.dropscan.de/login')
 		d = pq(r.content)
 		auth_token = d('[name=authenticity_token]').attr("value")
-		if self.verbose >= 3: print ("Auth token: ", auth_token, end=" ")
+		if self.verbose >= 3: print ("Auth token: ", auth_token)
 
 		# Login
-		if self.verbose >= 3: print ("--- Login ---" , end=" ")
+		if self.verbose >= 3: print ("--- Login ---")
 		auth = { 'user[email]': self.user, 'user[password]': self.password, 'user[remember_me]': 0,
 		'authenticity_token': auth_token}
 		r = self.session.post('https://secure.dropscan.de/login',
 			data = auth, allow_redirects=True)
 		# STATUS is 200 on error, 302 on success (if not following redirect)
-		if self.verbose >= 3: print ("Status code: ", r.status_code, "\nURL: ", r.url, end=" ")
+		if self.verbose >= 3: print ("Status code: ", r.status_code, "\nURL: ", r.url)
 
-		# Get scanbox-id from URL. Login results in a 302 forward to the scanbox URL., end=" ")
+		# Get scanbox-id from URL. Login results in a 302 forward to the scanbox URL.
 		m = re.search('.*/scanboxes/([0-9a-fA-F].*)$', r.url)
 		if m is None:
-			raise Exception("Login error (scanbox not found)."); 
+			raise Exception("Login error (scanbox not found).");
 		else:
 			self.scanbox = m.group(1)
 
@@ -104,7 +104,7 @@ class Dropscan:
 		filter -- Use self.FILTER enum
 		"""
 		filter_str = self.FILTER.reverse_mapping[filter]
-		if self.verbose >= 3: print ("--- getList (", filter_str, ") ---", end=" ")
+		if self.verbose >= 3: print ("--- getList (", filter_str, ") ---")
 		url = 'https://secure.dropscan.de/scanboxes/' + \
 			self.scanbox + '/mailings.json?filter=' + filter_str + '&maxPerPage=' + str(self.list_count)
 		r = self.session.get(url)
@@ -165,7 +165,7 @@ class Dropscan:
 			r1 = re.compile('.*[-_\. ]' + m['barcode'] + '[-_\. ]')
 			local_files = list(filter(r1.match, self.local_files_cache))
 
-			# If file is found, 
+			# If file is found,
 			if len(local_files) > 0:
 				res = self.addMailingtoBatch(m['slug'])
 				if res == 'added':
@@ -204,12 +204,12 @@ class Dropscan:
 			raise Exception("ZIP download not implemented.")
 
 		if self.verbose >= 3: print ("--- Download mailing %s (%s) ---" % (m['barcode'], self.TYPE.reverse_mapping[type]))
-		# Find filename
-		rec = m['recipient']['name']
+		# Determine filename - sort by receipient first name
+		rec = m['recipient']['name'].split(" ")[0]
 		if os.path.isdir(rec):
 			filename = rec + os.sep + filename
 		elif self.verbose >= 2:
-			print('Folder "%s" not found to sort by recipient')
+			print('Sorting by receipient: Folder "%s" not found')
 		# HTTP GET
 		r = self.session.get(url, verify=False)
 		if r.status_code != 200:
@@ -247,12 +247,12 @@ class Dropscan:
 
 	def setLocalFolders(self, folders):
 		"""
-		Additional folder(s) to check for locally existing files  
+		Additional folder(s) to check for locally existing files
 		"""
 		if folders is None: self.folders = []
 		else: self.folders = folders + ['.']
 		self.folders = list(set(self.folders))  # Unique elements
-		if self.verbose >= 3: print ("Local folders: ", self.folders, end=" ")
+		if self.verbose >= 3: print ("Local folders: ", self.folders)
 		self.local_files = None
 
 	def localFileMailing(self, mailing, type, search_folders):
@@ -376,14 +376,15 @@ class Dropscan:
 		tag = ''
 		if mailing['status'] == 'forwarded': tag = 'F'
 		if mailing['status'] == 'destroyed': tag = 'D'
-		# Scan filename for barcode-tags
+		if mailing['status'] == 'destroy_requested': tag = 'D'
+		# Scan filename for <barcode>-<tags>
 		b = mailing['barcode']
 		m = re.match(".*("+b+")-([A-Z]*)|.*("+b+")", local_file);
-		if m[1] or m[3]:
+		if m.group(1) or m.group(3):
 			pos = m.span()[1]
-			file_tag = m[2] if m[2] is not None else ''
+			file_tag = m.group(2) if m.group(2) is not None else ''
 			if not tag in file_tag:
-				if m[2] is None: tag = '-' + tag
+				if m.group(2) is None: tag = '-' + tag
 				local_file_new = local_file[:pos] + tag + local_file[pos:]
 				if not os.path.isfile(local_file_new):
 					os.rename(local_file, local_file_new)
@@ -398,24 +399,24 @@ class Dropscan:
 
 def demo(user, password, args):
 	"""	Demo/test routine: Login, list mailings, download one mailing """
-	print ("=== Running test ====", end=" ")
+	print ("=== Running test ====")
 	D = Dropscan(user, password, args.v)
 	if args.proxy:
 		D.setProxy(args.proxy)
 	D.login()
 
-	print ("=== List of all mailings ===", end=" ")
+	print ("=== List of all mailings ===")
 	for f in  [D.FILTER.received, D.FILTER.scanned, D.FILTER.forwarded, D.FILTER.destroyed]:
-		print ("INBOX:", D.FILTER.reverse_mapping[f], end=" ")
+		print ("INBOX:", D.FILTER.reverse_mapping[f])
 		l = D.getList(f)
 		for (i,m) in enumerate(l):
 			(filename,local_file) = D.localFileMailing(m, D.TYPE.envelope, D.folders)
-			print ("%2d: %s %s. local envelope: %s" % (i, m['created_at'], m['barcode'], str(local_file)), end=" ")
+			print ("%2d: %s %s. local envelope: %s" % (i, m['created_at'], m['barcode'], str(local_file)))
 
-	print ("=== Download of last mailing to demo_*.pdf / .jpg ===", end=" ")
+	print ("=== Download of last mailing to demo_*.pdf / .jpg ===")
 	l = D.getList(D.FILTER.scanned)
 	print (l[-1])
-	# data1 = D.downloadMailing(l[-1], D.TYPE.thumb, 'demo_thumb.jpg'), end=" ")
+	# data1 = D.downloadMailing(l[-1], D.TYPE.thumb, 'demo_thumb.jpg')
 	data2 = D.downloadMailing(l[-1], D.TYPE.envelope, 'demo_envelope.jpg')
 	data3 = D.downloadMailing(l[-1], D.TYPE.pdf, 'demo_pdf.pdf')
 
@@ -455,9 +456,9 @@ if __name__ == '__main__':
 		cred = json.loads(json_data)
 		user = cred["user"]
 		password = cred["password"]
-		if args.v >= 2: print ("Credentials loaded from", cred_file, end=" ")
+		if args.v >= 2: print ("Credentials loaded from", cred_file)
 	except:
-		if args.v >= 2: print ("Credentials file", cred_file, "not loaded.", end=" ")
+		if args.v >= 2: print ("Credentials file", cred_file, "not loaded.")
 
 	if args.u: user = args.u
 	if args.p: password = args.p
@@ -480,7 +481,7 @@ if __name__ == '__main__':
 	# Test/demo
 	if args.t:
 		demo(user, password, args)
-	
+
 	# Sync
 	elif args.sync:
 		if not args.nodb:
@@ -516,13 +517,13 @@ if __name__ == '__main__':
 		l = D.getBatches()
 		print(l)
 		if len(l) == 0:
-			print ("There is no unsent forwarding batch. Create one using the web interface", end=" ")
+			print ("There is no unsent forwarding batch. Create one using the web interface")
 
 	# Add mailing to forwarding batch
 	elif args.forward_mailing:
 		D.login()
 		res = D.addMailingtoBatch(args.forward_mailing);
-		print ("Result:", res, end=" ")
+		print ("Result:", res)
 
 	else:
 		parser.print_help()
