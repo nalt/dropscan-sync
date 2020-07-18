@@ -230,7 +230,8 @@ class Dropscan:
 		# HTTP GET
 		r = self.session.get(url, verify=False)
 		if r.status_code != 200:
-			if self.verbose >= 2: print("Invalid HTTP status code", r.status_code)
+			if self.verbose >= 2:
+				print("Invalid HTTP status code", r.status_code, "on URL", url)
 			return False
 		if len(filename) > 0:
 			with open(filename, 'wb') as fd:
@@ -257,7 +258,8 @@ class Dropscan:
 			if ret2 == 0 and os.path.exists(file_full):
 				os.remove(file_pdf)
 				os.remove(file_envelope)
-		os.remove(tmp_env)
+		if os.path.exists(tmp_env):
+			os.remove(tmp_env)
 		if (ret1 == 0) and (ret2 == 0): return file_full
 		else: return False
 
@@ -340,17 +342,17 @@ class Dropscan:
 		if thumbs:
 			ftypes.append(self.TYPE.thumb)
 		for m in reversed(mailings):
-			all_exist = True
-			full_exists = False
+			# TODO: Code may have errors, e.g. if some files already exist
+			exists = [False] * len(self.TYPE.reverse_mapping)
 			for f in ftypes:
 				# Check for local file
 				(file_org, local_file) = self.localFileMailing(m, f, self.folders)
 				filename[f] = file_org if local_file is None else local_file
 
 				if f == self.TYPE.full and local_file is not None:
-					full_exists = local_file
+					exists[self.TYPE.full] = local_file
 				# Perform download, if required:
-				if not full_exists and f != self.TYPE.full and \
+				if not exists[self.TYPE.full] and f != self.TYPE.full and \
 					local_file is None and \
 					not file_org in self.syncdb:
 					stored = self.downloadMailing(m, f, filename[f])
@@ -360,17 +362,16 @@ class Dropscan:
 						print ("Mailing stored to", filename[f])
 					elif stored is False:
 						#if self.verbose >= 0:
-						all_exist = False
-						print (  "Mailing failed to download:", filename[f])
+						print ("Mailing failed to download:", filename[f])
 					elif stored is None:
-						# File does not exist (yet)
-						all_exist = False
+						pass
 				else:
 					if self.verbose >= 3:
-						print ("File", filename[f], "already exists.")
+						print ("File", filename[f], "not required/already exists")
+				exists[f] = os.path.isfile(filename[f])
 
 				# Combine envelope & mailing into one file
-				if f == self.TYPE.pdf and combine and not full_exists and all_exist:
+				if f == self.TYPE.pdf and combine and not exists[self.TYPE.full] and exists[self.TYPE.envelope] and exists[self.TYPE.pdf]:
 					r = self.combineFiles(filename[self.TYPE.envelope], filename[self.TYPE.pdf])
 					if r:
 						filename[self.TYPE.full] = r
@@ -492,7 +493,11 @@ if __name__ == '__main__':
 	if args.dir:
 		folders += args.dir
 	if args.forward_dir:
-		folders += args.forward_dir
+		for d in args.forward_dir:
+			if not (d.startswith('./') or d.startswith('/')):
+				folders +=  ['./' + d]
+			else:
+				folders += [d]
 	D.setLocalFolders(folders)
 
 	# Test/demo
