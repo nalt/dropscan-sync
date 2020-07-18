@@ -393,21 +393,30 @@ class Dropscan:
 			return
 		tag = ''
 		if mailing['status'] == 'forwarded': tag = 'F'
+		if mailing['status'] == 'forward_requested': tag = 'R'
 		if mailing['status'] == 'destroyed': tag = 'D'
 		if mailing['status'] == 'destroy_requested': tag = 'D'
 		# Scan filename for <barcode>-<tags>
 		b = mailing['barcode']
-		m = re.match(".*("+b+")-([A-Z]*)|.*("+b+")", local_file);
-		if m.group(1) or m.group(3):
-			pos = m.span()[1]
-			file_tag = m.group(2) if m.group(2) is not None else ''
+		m = re.match(".*("+b+")(-[A-Z]*)|.*("+b+")", local_file)
+		if tag and (m.group(1) or m.group(3)):
+			file_tag = m.group(2) if m.group(2) is not None else '-'
 			if not tag in file_tag:
-				if m.group(2) is None: tag = '-' + tag
-				local_file_new = local_file[:pos] + tag + local_file[pos:]
+				file_tag += tag
+			if 'F' in file_tag and 'R' in file_tag:
+				file_tag = file_tag.replace('R', '')
+			if m.group(2):
+				pos = m.span(2)
+				local_file_new = local_file[:pos[0]] + file_tag + local_file[pos[1]:]
+			else:
+				pos = m.span(0)[1]
+				local_file_new = local_file[:pos] + file_tag + local_file[pos:]
+
+			if local_file_new != local_file:
 				if not os.path.isfile(local_file_new):
 					os.rename(local_file, local_file_new)
 					if self.verbose >= 1 or True:
-						print("New Tags, renamed to:", local_file_new)
+						print("New Tags, renamed from:", local_file, "to:", local_file_new)
 					return local_file_new
 				else:
 					if self.verbose >= 1:
