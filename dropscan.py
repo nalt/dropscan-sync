@@ -14,6 +14,7 @@ import re
 import os.path, shutil
 import json
 import datetime
+import isodate
 
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -92,11 +93,22 @@ class Dropscan:
 		if self.verbose >= 3: print ("Status code: ", r.status_code, "\nURL: ", r.url)
 
 		# Get scanbox-id from URL. Login results in a 302 forward to the scanbox URL.
-		m = re.search('.*/scanboxes/([0-9a-fA-F].*)$', r.url)
+		m = re.search('.*/mailings$', r.url)
 		if m is None:
-			raise Exception("Login error (scanbox not found).");
-		else:
-			self.scanbox = m.group(1)
+			raise Exception("Login error.");
+		self.getScanboxes()
+		return True
+
+	def getScanboxes(self):
+		"""
+		Get info about scanboxes, sets self.scanbox
+		"""
+		r = self.session.get('https://secure.dropscan.de/services/scanboxes')
+		scanboxes = r.json()
+		self.scanbox = scanboxes[0]['id']
+		if self.verbose >= 2:
+			print("Scanbox ID:", self.scanbox, "Receipients:", ','.join([r['name'] for r in scanboxes[0]['recipients']]))
+		
 
 	def getList(self, filter):
 		"""
@@ -104,11 +116,15 @@ class Dropscan:
 		filter -- Use self.FILTER enum
 		"""
 		filter_str = self.FILTER.reverse_mapping[filter]
-		if self.verbose >= 3: print ("--- getList (", filter_str, ") ---")
-		url = 'https://secure.dropscan.de/scanboxes/' + \
-			self.scanbox + '/mailings.json?filter=' + filter_str + '&maxPerPage=' + str(self.list_count)
+		# https://secure.dropscan.de/services/mailings?max_per_page=100&scanbox_ids=1834&sort_dir=desc&sorting=scanned_at&statuses=scanned
+		#url = 'https://secure.dropscan.de/scanboxes/' + \
+		url = 'https://secure.dropscan.de/services/mailings?sort_dir=desc&sorting=created_at&' + \
+			"scanbox_ids=" + self.scanbox + '&statuses=' + filter_str + '&max_per_page=' + str(self.list_count)
 		r = self.session.get(url)
 		mailings = r.json()
+		if self.verbose >= 3:
+			print("--- getList", filter_str, len(mailings), " mailings ---")
+			print(url)
 		return mailings
 
 	def getBatches(self, only_unsent=True):
@@ -182,30 +198,31 @@ class Dropscan:
 		filename  -- Save to given file. If empty, return the JPG/PDF stream
 		Rerturns:	 True (written to file), Contents, False (error), None (nothing to download)
 		"""
-		#m = mailing
-		url_json ='https://secure.dropscan.de/scanboxes/' + \
-				self.scanbox + '/mailings/' + mailing['slug'] + '.json'
-		r = self.session.get(url_json)
-		m = r.json()
+		m = mailing
+		#url_json ='https://secure.dropscan.de/scanboxes/' + \
+		#		self.scanbox + '/mailings/' + mailing['slug'] + '.json'
+		#r = self.session.get(url_json)
+		#m = r.json()
 
 		if type == self.TYPE.thumb:
 			url = m['envelope_thumbnail_url']
 		elif type == self.TYPE.envelope:
 			# The URL of the large envelope is *.jpg instead of *.small.jpg
 			# Otherwise, this would have to be extracted from /scanboxes/*/mailings/*
-			url = re.sub(r'^(.*)\.small\.(.*)$', r'\1.\2', m['envelope_thumbnail_url']);
+			#OLD url = re.sub(r'^(.*)\.small\.(.*)$', r'\1.\2', m['envelope_thumbnail_url']);
+			url = m['envelope_url']
 		elif type == self.TYPE.pdf:
-			if not 'scanned_at' in m:
-				if self.verbose >=2: print ("Mailing %s  not yet scanned" % (m['barcode']))
+			if not m['scanned_at']:
+				if self.verbose >=2: print ("Mailing %s not (yet) scanned" % (m['barcode']))
 				return None
-			url = 'https://secure.dropscan.de/scanboxes/' + \
-				self.scanbox + '/mailings/' + m['slug'] + '/download_pdf'
+			url = "https://secure.dropscan.de/services/mailings/" + m['id'] + "/pdf?src="
+			#OLD url = 'https://secure.dropscan.de/scanboxes/' + self.scanbox + '/mailings/' + m['slug'] + '/download_pdf'
 		elif type == self.TYPE.zip:
 			raise Exception("ZIP download not implemented.")
 
 		if self.verbose >= 3: print ("--- Download mailing %s (%s) ---" % (m['barcode'], self.TYPE.reverse_mapping[type]))
 		# Determine filename - sort by receipient first name
-		rec = m['recipient']['name'].split(" ")[0]
+		rec = m['recipient'].split(" ")[0]
 		if os.path.isdir(rec):
 			filename = rec + os.sep + filename
 		elif self.verbose >= 2:
@@ -279,8 +296,8 @@ class Dropscan:
 			self.local_folders_cache = search_folders
 
 		# Create filename for this mailing
-		date_ = re.search('([0-9]*)\.([0-9]*)\.([0-9]*)', m['created_at'])
-		date = date_.group(3) + '-' + date_.group(2) + '-' + date_.group(1)
+		date_ = isodate.parse_datetime(m['created_at'])
+		date = date_.strftime('%Y-%m-%d')
 		# ID & Filenames for this mailing
 		code = m['barcode']
 		type_str = '_' + self.TYPE.reverse_mapping[type] if type != self.TYPE.full else ''
