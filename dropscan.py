@@ -15,6 +15,7 @@ import os.path, shutil
 import json
 import datetime
 import isodate
+import subprocess
 
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -80,7 +81,8 @@ class Dropscan:
 		if self.verbose >= 3: print ("--- Pre-Login ---")
 		r = self.session.get('https://secure.dropscan.de/login')
 		d = pq(r.content)
-		auth_token = d('[name=authenticity_token]').attr("value")
+		auth_token = d('meta[name="csrf-token"]').attr("content")
+		if auth_token is None: print("Error: No auth token")
 		if self.verbose >= 3: print ("Auth token: ", auth_token)
 
 		# Login
@@ -237,7 +239,7 @@ class Dropscan:
 			#OLD url = re.sub(r'^(.*)\.small\.(.*)$', r'\1.\2', m['envelope_thumbnail_url']);
 			url = m['envelope_url']
 		elif type == self.TYPE.pdf:
-			if not m['scanned_at']:
+			if not 'scanned_at' in m or not m['scanned_at']:
 				if self.verbose >=2: print ("Mailing %s not (yet) scanned" % (m['barcode']))
 				return None
 			url = "https://secure.dropscan.de/services/mailings/" + m['id'] + "/pdf?src="
@@ -370,6 +372,7 @@ class Dropscan:
 			# TODO: Code may have errors, e.g. if some files already exist
 			exists = [False] * len(self.TYPE.reverse_mapping)
 			for f in ftypes:
+				stored = False
 				# Check for local file
 				(file_org, local_file) = self.localFileMailing(m, f, self.folders)
 				filename[f] = file_org if local_file is None else local_file
@@ -388,6 +391,7 @@ class Dropscan:
 					elif stored is False:
 						#if self.verbose >= 0:
 						print ("Mailing failed to download:", filename[f])
+						continue
 					elif stored is None:
 						pass
 				else:
@@ -401,6 +405,7 @@ class Dropscan:
 					if r:
 						filename[self.TYPE.full] = r
 						r_ren = self.writeTag(m, r)
+						filename[self.TYPE.full] = r_ren if r_ren else r
 						print ("Mailing combined to", r)
 					else:
 						print ("Failed: Combining mailing")
@@ -409,6 +414,17 @@ class Dropscan:
 				ren = self.writeTag(m, filename[f])
 				if ren:
 					filename[f] = ren
+
+				# Postproc script
+				script_post = os.path.dirname(os.path.realpath(__file__)) + '/postproc.sh'
+				if os.path.isfile(script_post) and f == self.TYPE.pdf and stored:
+					fn = filename[self.TYPE.full] if combine else filename[self.TYPE.pdf]
+					print(fn)
+					if os.path.isfile(fn):
+						run = subprocess.run([script_post, fn]) #, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+						#res = run.stdout.decode('utf-8')
+						# TODO: Should store new filename to filename, but not really needed any more 
+
 
 	def writeTag(self, mailing, local_file):
 		"""
