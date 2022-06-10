@@ -132,36 +132,39 @@ class Dropscan:
 		Get list of all forwarding batches
 		Returns the JSON-struct from Dropscan, adds is_sent flag
 		"""
-		r = self.session.get('https://secure.dropscan.de/forwarding_batches.json')
+		r = self.session.get('https://secure.dropscan.de/services/forwarding_batches?max_per_page=100&page=0')
 		batches = r.json()
-		batches = [ b.update({'is_sent': 'sent_at' in b }) or b for b in batches ]
+		batches = [ b.update({'is_sent': 'sent_at' in b and b['sent_at'] is not None }) or b for b in batches ]
 		batches = [ b for b in batches if not b['is_sent'] or not only_unsent ]
+		batches.sort(key=lambda e: e['requested_for'])
 		return batches
 
-	def addMailingtoBatch(self, mailing_slug, batch=None):
+	def addMailingtoBatch(self, mailing, batch=None):
 		"""
 		Adds a mailing to an existing forwarding batch.
-		mailing_slug  -- "slug" of mailing to add
+		mailing       -- mailing to add, used field id (was "slug")
 		batch         -- Batch struct, as returned by getBatches. If unspecified, the first unsent batch is used.
 		Returns: added, alreadyin, nobatch, error
 		"""
 		# Get batch struct, if unspecified
 		if batch is None:
-			batches = self.getBatches();
+			batches = self.getBatches()
+			# print(batches)
 			if len(batches) == 0:
 				if self.verbose >= 1: print ("No unsent batch available")
 				return "nobatch"
 			batch = batches[0]
 		# Check if mailing already in batch
 		for m in batch['mailings']:
-			if m['slug'] == mailing_slug:
-				if self.verbose >= 1: print ("Mailing", m['slug'], "already in batch")
+			if m == mailing['id'] or ('forwarding_batch_id' in mailing and mailing['forwarding_batch_id'] is not None):
+				if self.verbose >= 1: print ("Mailing", m['id'], "already in batch")
 				return "alreadyin"
 		# Add mailing to batch
-		r = self.session.get('https://secure.dropscan.de/scanboxes/%s/mailings/%s/forward?forwarding_batch_id=%s&src=detail' %
-			(self.scanbox, mailing_slug, batch['id']));
+		r = self.session.post('https://secure.dropscan.de/services/mailings/%s/request_forward' %
+			(mailing['id']), json = { "forwarding_batch_id": batch['id'] } )
 		ok = r.status_code == 200
-		if not ok and self.verbose >= 1: print ("Failed to add mailing", mailing_slug, "to batch")
+		if not ok and self.verbose >= 1:
+			print ("Failed to add mailing", mailing['id'], "to batch")
 		return "added" if ok else "error"
 
 
@@ -171,6 +174,7 @@ class Dropscan:
 		mailings         -- Mailings struct from getList()
 		forward_folders  -- List of folders with mailings to be forwarded
 		"""
+		count = 0
 		# Build local files DB
 		self.localFileMailing(mailings[0], self.TYPE.envelope, forward_folders)
 		for m in reversed(mailings):
@@ -183,11 +187,32 @@ class Dropscan:
 
 			# If file is found,
 			if len(local_files) > 0:
-				res = self.addMailingtoBatch(m['slug'])
+				res = self.addMailingtoBatch(m)
 				if res == 'added':
+					count += 1
 					print ("Adding mailing to batch:", local_files[0])
 				elif res == 'error':
 					print ("Error adding mailing to batch:", local_files[0])
+		return count
+		
+
+	def addOldtoBatch(self, mailings, older_days):
+		"""
+		Add mailings older than older_days to batch
+		"""
+		count = 0
+		for m in mailings:
+			if not (m['status'] == 'scanned' or m['status'] == 'received'):
+				continue
+			ndays = (datetime.datetime.now(datetime.timezone.utc) - isodate.parse_datetime(m['created_at'])).days
+			if ndays > older_days:
+				res = self.addMailingtoBatch(m)
+				if res == 'added':
+					count += 1
+					print ("Added old mailing %s (%d days) to batch." % (m['id'], ndays))
+				elif res == 'error':
+					print ("Error adding old mailing %s to batch." % (m['id']))
+		return count
 
 	def downloadMailing(self, mailing, type, filename=""):
 		"""
@@ -457,7 +482,8 @@ if __name__ == '__main__':
 	parser.add_argument('--nodb', action='store_true', help='Do not read Sync-DB (existence of local files is always checked)')
 	parser.add_argument('--batches', action='store_true', help='MODE: List forwarding batches (only unsent)')
 	parser.add_argument('-F', '--forward_mailing', help='MODE: Add the specified mailing slug to the first existing unsent forwarding batch')
-	parser.add_argument('--forward_dir', action='append', help='Add all mailings in given directory to forwarding batch. Must use -s.')
+	parser.add_argument('--forward_dir', action='append', help='Add all mailings in given directory to forwarding batch, if one exists. Must use -s.')
+	parser.add_argument('--forward_older', type=int, default=-1, help='Add all mailings older than given number of days to forwarding batch, if one exists. Must use -s.')
 	parser.add_argument('-c', '--check_multiple', action='store_true', help='MODE: Check if there are multiple files of the same mailing')
 	parser.add_argument('-u', required=0, help='Dropscan username (may be specified in credentials file)')
 	parser.add_argument('-p', required=0, help='Dropscan password (may be specified in credentials file)')
@@ -530,6 +556,9 @@ if __name__ == '__main__':
 		# Auto-add mailings in folder to forward batch
 		if args.forward_dir:
 			D.addFolderstoBatch(l1+l2, args.forward_dir)
+		if args.forward_older > -1:
+			D.addOldtoBatch(l1+l2, args.forward_older)
+
 
 	# Check for multiple files:
 	elif args.check_multiple:
@@ -546,14 +575,14 @@ if __name__ == '__main__':
 	elif args.batches:
 		D.login()
 		l = D.getBatches()
-		print(l)
+		print(json.dumps(l, sort_keys=True, indent=2))
 		if len(l) == 0:
 			print ("There is no unsent forwarding batch. Create one using the web interface")
 
 	# Add mailing to forwarding batch
 	elif args.forward_mailing:
 		D.login()
-		res = D.addMailingtoBatch(args.forward_mailing);
+		res = D.addMailingtoBatch(args.forward_mailing)
 		print ("Result:", res)
 
 	else:
